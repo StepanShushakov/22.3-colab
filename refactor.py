@@ -10,8 +10,10 @@ from keras.models import Sequential, Model
 from keras.layers import Dense, Dropout, BatchNormalization, Activation, Input, concatenate
 from keras.optimizers import Adam
 from sklearn.preprocessing import StandardScaler
+from keras.metrics import Metric
+import tensorflow as tf
 from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error, mean_absolute_percentage_error
 import matplotlib.pyplot as plt
 # Токенизатор
 from tensorflow.keras.preprocessing.text import Tokenizer
@@ -203,6 +205,37 @@ x_scaler = StandardScaler()
 y_train_scaled = y_scaler.fit_transform(y_train)
 x_train_scaled = x_scaler.fit_transform(x_train)
 
+# Кастомная метрика для MAE в оригинальных единицах
+class MAEInverseTransform(Metric):
+    def __init__(self, y_scaler, name='mae_inverse', **kwargs):
+        super(MAEInverseTransform, self).__init__(name=name, **kwargs)
+        self.y_scaler = y_scaler
+        self.total = self.add_weight(name='total', initializer='zeros')
+        self.count = self.add_weight(name='count', initializer='zeros')
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        # Сохраняем масштабирующие параметры
+        mean_ = self.y_scaler.mean_[0]
+        scale_ = self.y_scaler.scale_[0]
+        
+        # Преобразуем предсказания и истинные значения обратно в исходный масштаб
+        # Используем формулу обратного преобразования напрямую
+        y_true_original = y_true * scale_ + mean_
+        y_pred_original = y_pred * scale_ + mean_
+        
+        # Вычисляем MAE в исходных единицах
+        # Используем TensorFlow операции вместо NumPy
+        mae = tf.reduce_mean(tf.abs(y_true_original - y_pred_original))
+        self.total.assign_add(mae)
+        self.count.assign_add(1)
+
+    def result(self):
+        return self.total / (self.count + 1e-8)
+
+    def reset_state(self):
+        self.total.assign(0.0)
+        self.count.assign(0)
+
 input1 = Input((x_train.shape[1],))
 input2 = Input((x_train_mark.shape[1],))
 input3 = Input((x_train_model.shape[1],))
@@ -239,7 +272,8 @@ x = Dense(1, activation='linear')(x)
 # В Model передаются входы и выход
 model = Model((input1, input2, input3), x)
 
-model.compile(optimizer=Adam(learning_rate=1e-5), loss='mae', metrics=['mae'])
+mae_inv_metric = MAEInverseTransform(y_scaler)
+model.compile(optimizer=Adam(learning_rate=1e-5), loss='mae', metrics=['mae', mae_inv_metric])
 
 checkpoint = ModelCheckpoint('best_model.keras', monitor='val_mae', save_best_only=True, verbose=1, mode='min')
 early_stop = EarlyStopping(monitor='val_mae', patience=30, restore_best_weights=True, verbose=1, mode='min')
@@ -271,12 +305,14 @@ pred = y_scaler.inverse_transform(pred)    # Обратная нормирова
 # Расчет и вывод ошибок
 mse = mean_squared_error(pred, y_train[split_idx:])
 mae = mean_absolute_error(pred, y_train[split_idx:])
+mape = mean_absolute_percentage_error(y_train[split_idx:], pred)
 mean_price = np.mean(y_train[split_idx:])
 mse_percent = (np.sqrt(mse) / mean_price) * 100
 mae_percent = (mae / mean_price) * 100
 
 print(f'Среднеквадратичная ошибка (MSE): {mse:.2f}')
 print(f'Средняя абсолютная ошибка (MAE): {mae:.2f}')
+print(f'Средняя абсолютная процентная ошибка (MAPE): {mape*100:.2f}%')
 print(f'Средняя цена: {mean_price:.2f}')
 print(f'Ошибка MSE в процентах: {mse_percent:.2f}%')
 print(f'Ошибка MAE в процентах: {mae_percent:.2f}%')
