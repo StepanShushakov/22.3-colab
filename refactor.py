@@ -239,7 +239,7 @@ x = Dense(1, activation='linear')(x)
 # В Model передаются входы и выход
 model = Model((input1, input2, input3), x)
 
-model.compile(optimizer=Adam(learning_rate=1e-5), loss='mse', metrics=['mae'])
+model.compile(optimizer=Adam(learning_rate=1e-5), loss='mae', metrics=['mae'])
 
 checkpoint = ModelCheckpoint('best_model.keras', monitor='val_mae', save_best_only=True, verbose=1, mode='min')
 early_stop = EarlyStopping(monitor='val_mae', patience=30, restore_best_weights=True, verbose=1, mode='min')
