@@ -4,19 +4,23 @@ cars = pd.read_csv('japan_cars_dataset.csv', sep=',')
 # Удалим строки с пустыми значениями
 cars = cars.dropna()
 
+from datetime import datetime
 import numpy as np
 from keras import utils
 from keras.models import Sequential, Model
-from keras.layers import Dense, Dropout, BatchNormalization, Activation, Input, concatenate
+from keras.layers import Dense, Dropout, BatchNormalization, Activation, Input, concatenate, Embedding, GlobalAveragePooling1D
 from keras.optimizers import Adam
 from sklearn.preprocessing import StandardScaler
 from keras.metrics import Metric
 import tensorflow as tf
 from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 from sklearn.metrics import mean_squared_error, mean_absolute_error, mean_absolute_percentage_error
+import matplotlib
+matplotlib.use('TkAgg')  # или 'Qt5Agg', 'MacOSX' и т.д.
 import matplotlib.pyplot as plt
 # Токенизатор
 from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 # Удаляем первую колонку без имени
 cars = cars.drop(columns=cars.columns[0])
@@ -75,7 +79,7 @@ cars = cars.sample(frac=1, random_state=42).reset_index(drop=True)
 
 # Используется встроенный в Keras токенизатор для разбиения текста и построения частотного словаря
 tokenizer_mark = Tokenizer(
-    num_words=3000,                                          # объем словаря
+    num_words=100,                                           # уменьшенный объем словаря (было 3000)
     filters='!"«»#$№%&()*+,-–—./:;<=>?@[\\]^_`{|}~\t\n\xa0', # убираемые из текста ненужные символы
     lower=True,                                              # приведение слов к нижнему регистру
     split=' ',                                               # разделитель слов
@@ -84,7 +88,7 @@ tokenizer_mark = Tokenizer(
 )
 
 tokenizer_model = Tokenizer(
-    num_words=3000,                                          # объем словаря
+    num_words=200,                                           # уменьшенный объем словаря (было 3000)
     filters='!"«»#$№%&()*+,-–—./:;<=>?@[\\]^_`{|}~\t\n\xa0', # убираемые из текста ненужные символы
     lower=True,                                              # приведение слов к нижнему регистру
     split=' ',                                               # разделитель слов
@@ -99,21 +103,39 @@ tokenizer_model.fit_on_texts(cars['model'])
 # Преобразование текстов в последовательность индексов согласно частотному словарю
 mark_seq = tokenizer_mark.texts_to_sequences(cars['mark'])
 model_seq = tokenizer_model.texts_to_sequences(cars['model'])
-# Преобразование последовательностей индексов в bag of words
-x_train_mark = tokenizer_mark.sequences_to_matrix(mark_seq)
-x_train_model = tokenizer_model.sequences_to_matrix(model_seq)
+# # Преобразование последовательностей индексов в bag of words
+# x_train_mark = tokenizer_mark.sequences_to_matrix(mark_seq)
+# x_train_model = tokenizer_model.sequences_to_matrix(model_seq)
+#
+#
+# # Освобождение памяти от промежуточных данных
+# # del mark_model_seq, tokenizer
+# del mark_seq, model_seq, tokenizer_mark, tokenizer_model
+# print("done")
 
+# Определяем максимальную длину последовательностей
+max_len_mark = max(len(seq) for seq in mark_seq) if mark_seq else 1
+max_len_model = max(len(seq) for seq in model_seq) if model_seq else 1
+# Ограничиваем максимальную длину для эффективности
+max_len_mark = min(max_len_mark, 10)
+max_len_model = min(max_len_model, 15)  # модели могут быть длиннее
+
+# Дополняем последовательности до одинаковой длины (padding)
+x_train_mark = pad_sequences(mark_seq, maxlen=max_len_mark, padding='post', truncating='post')
+x_train_model = pad_sequences(model_seq, maxlen=max_len_model, padding='post', truncating='post')
+
+# Получаем размеры словарей для Embedding слоев
+# Используем num_words из токенизатора + 1 для padding (0 используется для padding)
+vocab_size_mark = tokenizer_mark.num_words + 1  # +1 для padding token (0)
+vocab_size_model = tokenizer_model.num_words + 1  # +1 для padding token (0)
 
 # Освобождение памяти от промежуточных данных
-# del mark_model_seq, tokenizer
-del mark_seq, model_seq, tokenizer_mark, tokenizer_model
-print("done")
+del mark_seq, model_seq
+print(f"Размер словаря марки: {vocab_size_mark}, максимальная длина: {max_len_mark}")
+print(f"Размер словаря модели: {vocab_size_model}, максимальная длина: {max_len_model}")
 
 # Удалены классы интервалов, так как признаки теперь числовые
 
-# transmission_class  = {'cvt': 0,
-#                        'mt': 1,
-#                        'at': 2
 transmission_class  = {'mt': 0,
                        'at': 1
                        }
@@ -123,12 +145,6 @@ drive_class         = {'2wd': 0,
 hand_drive_class    = {'lhd': 0,
                        'rhd': 1
                        }
-# fuel_class          = {'cng': 0,
-#                        'hybrid': 1,
-#                        'lpg': 2,
-#                        'diesel': 3,
-#                        'gasoline': 4
-#                       }
 fuel_class          = {'hybrid': 0,
                        'lpg': 1,
                        'diesel': 2,
@@ -166,6 +182,17 @@ COL_FUEL            = cars.columns.get_loc('fuel')
 COL_PRICE           = cars.columns.get_loc('price')
 
 def get_row_data(row):
+    # Базовые признаки
+    year = float(row[COL_YEAR])
+    mileage = float(row[COL_MILEAGE])
+    engine_capacity = float(row[COL_ENGINE_CAPACITY])
+
+    # Улучшенные признаки: производные признаки с большим смыслом
+    current_year = datetime.now().year
+    car_age = current_year - year  # возраст автомобиля
+    mileage_per_year = mileage / (car_age + 1)  # пробег на год (избегаем деления на 0)
+    log_mileage = np.log1p(mileage)  # логарифм пробега для нормализации распределения
+
     # Объединение всех входных данных в один общий вектор
     x_data = np.hstack([
         np.array([float(row[COL_YEAR])]),
@@ -242,29 +269,31 @@ input3 = Input((x_train_model.shape[1],))
 
 # Первый вход для числовых данных
 x1 = input1
-x1 = Dense(20, activation="relu")(x1)
-x1 = Dense(500, activation="relu")(x1)
-x1 = Dense(200, activation="relu")(x1)
-
+x1 = Dense(15, activation="relu")(x1)
+x1 = Dense(100, activation="relu")(x1)
+x1 = BatchNormalization()(x1)
 
 # Второй вход для данных о марке авто
 x2 = input2
-x2 = Dense(20, activation="relu")(x2)
-x2 = Dense(200, activation="relu")(x2)
-x2 = Dropout(0.3)(x2)
+x2 = Embedding(input_dim=vocab_size_mark, output_dim=12, input_length=max_len_mark)(input2)
+x2 = GlobalAveragePooling1D()(x2)
+x2 = Dense(50, activation="relu")(x2)
+x2 = Dropout(0.2)(x2)
 
 # Третий вход для данных о модели авто
 x3 = input3
-x3 = Dense(20, activation="relu")(x3)
-x3 = Dense(200, activation="relu")(x3)
-x3 = Dropout(0.3)(x3)
+x3 = Embedding(input_dim=vocab_size_model, output_dim=16, input_length=max_len_model)(input3)  # немного больше для модели
+x3 = GlobalAveragePooling1D()(x3)
+x3 = Dense(50, activation="relu")(x3)
+x3 = Dropout(0.2)(x3)
 
-# Объединение четырех веток
+# Объединение трех веток
 x = concatenate([x1, x2, x3])
 
 # Промежуточный слой
-x = Dense(30, activation='relu')(x)
-x = Dropout(0.5)(x)
+x = Dense(35, activation='relu')(x)
+x = BatchNormalization()(x)
+x = Dropout(0.3)(x)
 
 # Финальный регрессирующий нейрон
 x = Dense(1, activation='linear')(x)
@@ -284,7 +313,7 @@ split_idx = int(len(x_train) * 0.85)
 
 history = model.fit([x_train_scaled[:split_idx], x_train_mark[:split_idx], x_train_model[:split_idx]],
                     y_train_scaled[:split_idx],
-                    batch_size=32,
+                    batch_size=20,
                     epochs=450,
                     callbacks=[checkpoint, early_stop, reduce_lr],
                     validation_data=([x_train_scaled[split_idx:], x_train_mark[split_idx:], x_train_model[split_idx:]], y_train_scaled[split_idx:]),
@@ -295,7 +324,7 @@ plt.plot(history.history['val_mae'], label='Средняя абсолютная 
 plt.xlabel('Эпоха обучения')
 plt.ylabel('Средняя абсолютная ошибка')
 plt.legend()
-# plt.show()
+plt.show()
 
 pred = model.predict([x_train_scaled[split_idx:], x_train_mark[split_idx:], x_train_model[split_idx:]])
 
@@ -319,8 +348,8 @@ print(f'Ошибка MAE в процентах: {mae_percent:.2f}%')
 
 for i in range(10):
     print('Реальное значение: {:6.2f}  Предсказанное значение: {:6.2f}  Разница: {:6.2f}'.format(y_train[split_idx:][i, 0],
-                                                                                                 pred[i, 0],
-                                                                                                 abs(y_train[split_idx:][i, 0] - pred[i, 0])))
+                                                                                                pred[i, 0],
+                                                                                                abs(y_train[split_idx:][i, 0] - pred[i, 0])))
 fig, ax = plt.subplots(figsize=(6, 6))
 # Плоские массивы для корректного scatter
 true_vals = y_train[split_idx:].ravel()
@@ -335,4 +364,4 @@ ax.plot(plt.xlim(), plt.ylim(), 'r')          # Отрисовка диагон�
 plt.xlabel('Правильные значения')
 plt.ylabel('Предсказания')
 plt.grid()
-# plt.show()
+plt.show()
