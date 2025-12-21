@@ -221,8 +221,21 @@ def get_train_data(dataFrame):
 
     return np.array(x_data), np.array(y_data)
 
-# Формирование выборки из загруженного набора данных
-x_train, y_train = get_train_data(cars)
+# Формирование обучающей выборки из загруженного набора данных
+x_data, y_data = get_train_data(cars)
+
+# Разделение на train/val/test в соотношении 70%/15%/15%
+from sklearn.model_selection import train_test_split
+
+# Сначала отделяем тестовую часть
+x_train_val, x_test, y_train_val, y_test = train_test_split(
+    x_data, y_data, test_size=0.15, random_state=42, shuffle=True
+)
+
+# Затем делим оставшееся на обучающую и валидационную
+x_train, x_val, y_train, y_val = train_test_split(
+    x_train_val, y_train_val, test_size=0.176, random_state=42, shuffle=True
+)
 
 # Для нормализации данных используются готовые инструменты
 y_scaler = StandardScaler()
@@ -230,7 +243,11 @@ x_scaler = StandardScaler()
 
 # Нормализация выходных и входных данных по стандартному нормальному распределению
 y_train_scaled = y_scaler.fit_transform(y_train)
+y_val_scaled = y_scaler.transform(y_val)
+y_test_scaled = y_scaler.transform(y_test)
 x_train_scaled = x_scaler.fit_transform(x_train)
+x_val_scaled = x_scaler.transform(x_val)
+x_test_scaled = x_scaler.transform(x_test)
 
 # Кастомная метрика для MAE в оригинальных единицах
 class MAEInverseTransform(Metric):
@@ -308,16 +325,19 @@ checkpoint = ModelCheckpoint('best_model.keras', monitor='val_mae', save_best_on
 early_stop = EarlyStopping(monitor='val_mae', patience=30, restore_best_weights=True, verbose=1, mode='min')
 reduce_lr = ReduceLROnPlateau(monitor='val_mae', factor=0.4, patience=10, min_lr=1e-7, verbose=1, mode='min')
 
-# Определяем размер разделения (85% на обучение, 15% на валидацию - больше данных для обучения)
-split_idx = int(len(x_train) * 0.85)
-
-history = model.fit([x_train_scaled[:split_idx], x_train_mark[:split_idx], x_train_model[:split_idx]],
-                    y_train_scaled[:split_idx],
-                    batch_size=20,
-                    epochs=450,
-                    callbacks=[checkpoint, early_stop, reduce_lr],
-                    validation_data=([x_train_scaled[split_idx:], x_train_mark[split_idx:], x_train_model[split_idx:]], y_train_scaled[split_idx:]),
-                    verbose=1)
+# Обучение модели на обучающем наборе с валидацией на val
+history = model.fit(
+    [x_train_scaled, x_train_mark[:len(x_train)], x_train_model[:len(x_train)]],
+    y_train_scaled,
+    batch_size=20,
+    epochs=450,
+    callbacks=[checkpoint, early_stop, reduce_lr],
+    validation_data=(
+        [x_val_scaled, x_train_mark[len(x_train):len(x_train) + len(x_val)], x_train_model[len(x_train):len(x_train) + len(x_val)]],
+        y_val_scaled
+    ),
+    verbose=1
+)
 
 plt.plot(history.history['mae'], label='Средняя абсолютная ошибка на обучающем наборе')
 plt.plot(history.history['val_mae'], label='Средняя абсолютная ошибка на проверочном наборе')
@@ -326,16 +346,22 @@ plt.ylabel('Средняя абсолютная ошибка')
 plt.legend()
 plt.show()
 
-pred = model.predict([x_train_scaled[split_idx:], x_train_mark[split_idx:], x_train_model[split_idx:]])
+# Оценка модели на тестовом наборе
+print("\n=== Оценка на тестовом наборе ===")
+pred_test = model.predict([
+    x_test_scaled,
+    x_train_mark[len(x_train) + len(x_val):],
+    x_train_model[len(x_train) + len(x_val):]
+])
 
-pred = y_scaler.inverse_transform(pred)    # Обратная нормированию процедура
+# Преобразование предсказаний обратно в исходный масштаб
+pred_test = y_scaler.inverse_transform(pred_test)
 
-#print('Средняя абсолютная ошибка:', mean_absolute_error(pred, y_train[split_idx:]), '\n') # расчет средней абсолютной ошибки
-# Расчет и вывод ошибок
-mse = mean_squared_error(pred, y_train[split_idx:])
-mae = mean_absolute_error(pred, y_train[split_idx:])
-mape = mean_absolute_percentage_error(y_train[split_idx:], pred)
-mean_price = np.mean(y_train[split_idx:])
+# Расчет и вывод метрик на тестовом наборе
+mse = mean_squared_error(pred_test, y_test)
+mae = mean_absolute_error(pred_test, y_test)
+mape = mean_absolute_percentage_error(y_test, pred_test)
+mean_price = np.mean(y_test)
 mse_percent = (np.sqrt(mse) / mean_price) * 100
 mae_percent = (mae / mean_price) * 100
 
@@ -346,21 +372,22 @@ print(f'Средняя цена: {mean_price:.2f}')
 print(f'Ошибка MSE в процентах: {mse_percent:.2f}%')
 print(f'Ошибка MAE в процентах: {mae_percent:.2f}%')
 
+# Вывод первых 10 предсказаний
 for i in range(10):
-    print('Реальное значение: {:6.2f}  Предсказанное значение: {:6.2f}  Разница: {:6.2f}'.format(y_train[split_idx:][i, 0],
-                                                                                                pred[i, 0],
-                                                                                                abs(y_train[split_idx:][i, 0] - pred[i, 0])))
+    print(f'Реальное значение: {y_test[i, 0]:6.2f}  Предсказанное значение: {pred_test[i, 0]:6.2f}  Разница: {abs(y_test[i, 0] - pred_test[i, 0]):6.2f}')
+
+# Визуализация результатов на тестовом наборе
 fig, ax = plt.subplots(figsize=(6, 6))
 # Плоские массивы для корректного scatter
-true_vals = y_train[split_idx:].ravel()
-pred_vals = pred.ravel()
-ax.scatter(true_vals, pred_vals)          # Отрисовка точечного графика
+dtrue_vals = y_test.ravel()
+dpred_vals = pred_test.ravel()
+ax.scatter(dtrue_vals, dpred_vals)
 # Динамические пределы осей, чтобы точки были видны
-pad_x = (true_vals.max() - true_vals.min()) * 0.05
-pad_y = (pred_vals.max() - pred_vals.min()) * 0.05
-ax.set_xlim(true_vals.min() - pad_x, true_vals.max() + pad_x)
-ax.set_ylim(pred_vals.min() - pad_y, pred_vals.max() + pad_y)
-ax.plot(plt.xlim(), plt.ylim(), 'r')          # Отрисовка диагональной линии
+pad_x = (dtrue_vals.max() - dtrue_vals.min()) * 0.05
+pad_y = (dpred_vals.max() - dpred_vals.min()) * 0.05
+ax.set_xlim(dtrue_vals.min() - pad_x, dtrue_vals.max() + pad_x)
+ax.set_ylim(dpred_vals.min() - pad_y, dpred_vals.max() + pad_y)
+ax.plot(plt.xlim(), plt.ylim(), 'r')
 plt.xlabel('Правильные значения')
 plt.ylabel('Предсказания')
 plt.grid()
