@@ -96,46 +96,6 @@ tokenizer_model = Tokenizer(
     char_level=False                                         # разделяем по словам, а не по единичным символам
 )
 
-# Построение частотного словаря по текстам образования
-# tokenizer.fit_on_texts(cars['mark_model'])
-tokenizer_mark.fit_on_texts(cars['mark'])
-tokenizer_model.fit_on_texts(cars['model'])
-# Преобразование текстов в последовательность индексов согласно частотному словарю
-mark_seq = tokenizer_mark.texts_to_sequences(cars['mark'])
-model_seq = tokenizer_model.texts_to_sequences(cars['model'])
-# # Преобразование последовательностей индексов в bag of words
-# x_train_mark = tokenizer_mark.sequences_to_matrix(mark_seq)
-# x_train_model = tokenizer_model.sequences_to_matrix(model_seq)
-#
-#
-# # Освобождение памяти от промежуточных данных
-# # del mark_model_seq, tokenizer
-# del mark_seq, model_seq, tokenizer_mark, tokenizer_model
-# print("done")
-
-# Определяем максимальную длину последовательностей
-max_len_mark = max(len(seq) for seq in mark_seq) if mark_seq else 1
-max_len_model = max(len(seq) for seq in model_seq) if model_seq else 1
-# Ограничиваем максимальную длину для эффективности
-max_len_mark = min(max_len_mark, 10)
-max_len_model = min(max_len_model, 15)  # модели могут быть длиннее
-
-# Дополняем последовательности до одинаковой длины (padding)
-x_train_mark = pad_sequences(mark_seq, maxlen=max_len_mark, padding='post', truncating='post')
-x_train_model = pad_sequences(model_seq, maxlen=max_len_model, padding='post', truncating='post')
-
-# Получаем размеры словарей для Embedding слоев
-# Используем num_words из токенизатора + 1 для padding (0 используется для padding)
-vocab_size_mark = tokenizer_mark.num_words + 1  # +1 для padding token (0)
-vocab_size_model = tokenizer_model.num_words + 1  # +1 для padding token (0)
-
-# Освобождение памяти от промежуточных данных
-del mark_seq, model_seq
-print(f"Размер словаря марки: {vocab_size_mark}, максимальная длина: {max_len_mark}")
-print(f"Размер словаря модели: {vocab_size_model}, максимальная длина: {max_len_model}")
-
-# Удалены классы интервалов, так как признаки теперь числовые
-
 transmission_class  = {'mt': 0,
                        'at': 1
                        }
@@ -237,15 +197,71 @@ x_train, x_val, y_train, y_val = train_test_split(
     x_train_val, y_train_val, test_size=0.176, random_state=42, shuffle=True
 )
 
+# Построение частотного словаря ТОЛЬКО на train данных
+tokenizer_mark.fit_on_texts(cars['mark'].iloc[:len(x_train)])
+tokenizer_model.fit_on_texts(cars['model'].iloc[:len(x_train)])
+
+# Преобразование текстов в последовательность индексов согласно частотному словарю
+# Сначала для train
+mark_seq_train = tokenizer_mark.texts_to_sequences(cars['mark'].iloc[:len(x_train)])
+model_seq_train = tokenizer_model.texts_to_sequences(cars['model'].iloc[:len(x_train)])
+
+# Затем для val
+mark_seq_val = tokenizer_mark.texts_to_sequences(cars['mark'].iloc[len(x_train):len(x_train) + len(x_val)])
+model_seq_val = tokenizer_model.texts_to_sequences(cars['model'].iloc[len(x_train):len(x_train) + len(x_val)])
+
+# И для test
+mark_seq_test = tokenizer_mark.texts_to_sequences(cars['mark'].iloc[len(x_train) + len(x_val):])
+model_seq_test = tokenizer_model.texts_to_sequences(cars['model'].iloc[len(x_train) + len(x_val):])
+# # Преобразование последовательностей индексов в bag of words
+# x_train_mark = tokenizer_mark.sequences_to_matrix(mark_seq)
+# x_train_model = tokenizer_model.sequences_to_matrix(model_seq)
+#
+#
+# # Освобождение памяти от промежуточных данных
+# # del mark_model_seq, tokenizer
+# del mark_seq, model_seq, tokenizer_mark, tokenizer_model
+# print("done")
+
+# Определяем максимальную длину последовательностей
+max_len_mark = max(len(seq) for seq in mark_seq_train) if mark_seq_train else 1
+max_len_model = max(len(seq) for seq in model_seq_train) if model_seq_train else 1
+# Ограничиваем максимальную длину для эффективности
+max_len_mark = min(max_len_mark, 10)
+max_len_model = min(max_len_model, 15)  # модели могут быть длиннее
+
+# Дополняем последовательности до одинаковой длины (padding)
+x_train_mark = pad_sequences(mark_seq_train, maxlen=max_len_mark, padding='post', truncating='post')
+x_train_model = pad_sequences(model_seq_train, maxlen=max_len_model, padding='post', truncating='post')
+x_val_mark = pad_sequences(mark_seq_val, maxlen=max_len_mark, padding='post', truncating='post')
+x_val_model = pad_sequences(model_seq_val, maxlen=max_len_model, padding='post', truncating='post')
+x_test_mark = pad_sequences(mark_seq_test, maxlen=max_len_mark, padding='post', truncating='post')
+x_test_model = pad_sequences(model_seq_test, maxlen=max_len_model, padding='post', truncating='post')
+
+# Получаем размеры словарей для Embedding слоев
+# Используем num_words из токенизатора + 1 для padding (0 используется для padding)
+vocab_size_mark = tokenizer_mark.num_words + 1  # +1 для padding token (0)
+vocab_size_model = tokenizer_model.num_words + 1  # +1 для padding token (0)
+
+# Освобождение памяти от промежуточных данных
+del mark_seq_train, model_seq_train, mark_seq_val, model_seq_val, mark_seq_test, model_seq_test
+print(f"Размер словаря марки: {vocab_size_mark}, максимальная длина: {max_len_mark}")
+print(f"Размер словаря модели: {vocab_size_model}, максимальная длина: {max_len_model}")
+
 # Для нормализации данных используются готовые инструменты
 y_scaler = StandardScaler()
 x_scaler = StandardScaler()
 
 # Нормализация выходных и входных данных по стандартному нормальному распределению
-y_train_scaled = y_scaler.fit_transform(y_train)
+# Сначала обучаем скалеры только на train данных
+y_scaler.fit(y_train)
+x_scaler.fit(x_train)
+
+# Затем применяем преобразование ко всем выборкам
+y_train_scaled = y_scaler.transform(y_train)
 y_val_scaled = y_scaler.transform(y_val)
 y_test_scaled = y_scaler.transform(y_test)
-x_train_scaled = x_scaler.fit_transform(x_train)
+x_train_scaled = x_scaler.transform(x_train)
 x_val_scaled = x_scaler.transform(x_val)
 x_test_scaled = x_scaler.transform(x_test)
 
@@ -292,14 +308,14 @@ x1 = BatchNormalization()(x1)
 
 # Второй вход для данных о марке авто
 x2 = input2
-x2 = Embedding(input_dim=vocab_size_mark, output_dim=12, input_length=max_len_mark)(input2)
+x2 = Embedding(input_dim=vocab_size_mark, output_dim=12, input_length=max_len_mark)(x2)
 x2 = GlobalAveragePooling1D()(x2)
 x2 = Dense(50, activation="relu")(x2)
 x2 = Dropout(0.2)(x2)
 
 # Третий вход для данных о модели авто
 x3 = input3
-x3 = Embedding(input_dim=vocab_size_model, output_dim=16, input_length=max_len_model)(input3)  # немного больше для модели
+x3 = Embedding(input_dim=vocab_size_model, output_dim=16, input_length=max_len_model)(x3)  # немного больше для модели
 x3 = GlobalAveragePooling1D()(x3)
 x3 = Dense(50, activation="relu")(x3)
 x3 = Dropout(0.2)(x3)
@@ -327,13 +343,13 @@ reduce_lr = ReduceLROnPlateau(monitor='val_mae', factor=0.4, patience=10, min_lr
 
 # Обучение модели на обучающем наборе с валидацией на val
 history = model.fit(
-    [x_train_scaled, x_train_mark[:len(x_train)], x_train_model[:len(x_train)]],
+    [x_train_scaled, x_train_mark, x_train_model],
     y_train_scaled,
     batch_size=20,
     epochs=450,
     callbacks=[checkpoint, early_stop, reduce_lr],
     validation_data=(
-        [x_val_scaled, x_train_mark[len(x_train):len(x_train) + len(x_val)], x_train_model[len(x_train):len(x_train) + len(x_val)]],
+        [x_val_scaled, x_val_mark, x_val_model],
         y_val_scaled
     ),
     verbose=1
@@ -350,8 +366,8 @@ plt.show()
 print("\n=== Оценка на тестовом наборе ===")
 pred_test = model.predict([
     x_test_scaled,
-    x_train_mark[len(x_train) + len(x_val):],
-    x_train_model[len(x_train) + len(x_val):]
+    x_test_mark,
+    x_test_model
 ])
 
 # Преобразование предсказаний обратно в исходный масштаб
