@@ -335,11 +335,11 @@ x = Dense(1, activation='linear')(x)
 model = Model((input1, input2, input3), x)
 
 mae_inv_metric = MAEInverseTransform(y_scaler)
-model.compile(optimizer=Adam(learning_rate=1e-5), loss='mae', metrics=['mae', mae_inv_metric])
+model.compile(optimizer=Adam(learning_rate=1e-5), loss='mse', metrics=['mse', 'mae', mae_inv_metric])
 
-checkpoint = ModelCheckpoint('best_model.keras', monitor='val_mae', save_best_only=True, verbose=1, mode='min')
-early_stop = EarlyStopping(monitor='val_mae', patience=30, restore_best_weights=True, verbose=1, mode='min')
-reduce_lr = ReduceLROnPlateau(monitor='val_mae', factor=0.4, patience=10, min_lr=1e-7, verbose=1, mode='min')
+checkpoint = ModelCheckpoint('best_model.keras', monitor='val_mse', save_best_only=True, verbose=1, mode='min')
+early_stop = EarlyStopping(monitor='val_mse', patience=30, restore_best_weights=True, verbose=1, mode='min')
+reduce_lr = ReduceLROnPlateau(monitor='val_mse', factor=0.4, patience=10, min_lr=1e-7, verbose=1, mode='min')
 
 # Обучение модели на обучающем наборе с валидацией на val
 history = model.fit(
@@ -355,8 +355,8 @@ history = model.fit(
     verbose=1
 )
 
-plt.plot(history.history['mae'], label='Средняя абсолютная ошибка на обучающем наборе')
-plt.plot(history.history['val_mae'], label='Средняя абсолютная ошибка на проверочном наборе')
+plt.plot(history.history['mse'], label='Среднеквадратичная ошибка на обучающем наборе')
+plt.plot(history.history['val_mse'], label='Среднеквадратичная ошибка на проверочном наборе')
 plt.xlabel('Эпоха обучения')
 plt.ylabel('Средняя абсолютная ошибка')
 plt.legend()
