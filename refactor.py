@@ -26,12 +26,23 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 # Удаляем первую колонку без имени
 cars = cars.drop(columns=cars.columns[0])
 
-# Удаляем редкие марки (<3 вхождений) и считаем, сколько строк ушло
+# Определяем японские марки
+japan_brands = ['toyota', 'nissan', 'honda', 'mazda', 'suzuki', 'mitsubishi', 'daihatsu', 'subaru', 'isuzu', 'hino', 'mitsuoka', 'kubota']
+
+# Удаляем не японские марки
 rows_before = len(cars)
-rare_marks = cars['mark'].value_counts()[lambda s: s < 3].index
+cars = cars[cars['mark'].isin(japan_brands)]
+removed_non_japan = rows_before - len(cars)
+print(f"Удалено не японских марок: {removed_non_japan}")
+
+# Удаляем редкие марки (менее 4 вхождений)
+rows_before = len(cars)
+rare_marks = cars['mark'].value_counts()[lambda s: s < 4].index
 cars = cars[~cars['mark'].isin(rare_marks)]
-removed_rows = rows_before - len(cars)
-print(f"Удалено строк с редкими марками (<3): {removed_rows}")
+removed_rare = rows_before - len(cars)
+print(f"Удалено редких марок (менее 4 вхождений): {removed_rare}")
+
+print(f"Осталось строк в датасете: {len(cars)}")
 
 
 # Удаление выбросов (outliers) для улучшения предсказания цены
@@ -62,10 +73,10 @@ def remove_outliers_iqr(df, columns, multiplier=1.5):
     return df_clean
 
 # Определяем колонки для проверки на выбросы
-numeric_columns = ['price', 'year', 'mileage', 'engine_capacity']
+numeric_columns = ['price'] #оставляем только цену, что бы не терять вариативность 'year', 'mileage', 'engine_capacity']
 
 # Удаляем выбросы
-cars = remove_outliers_iqr(cars, numeric_columns, multiplier=1.2)
+cars = remove_outliers_iqr(cars, numeric_columns, multiplier=1.5)
 
 removed_outliers = rows_before_outliers - len(cars)
 print(f"\nВсего удалено строк с выбросами: {removed_outliers}")
