@@ -3,3 +3,5 @@
 /run.sh
 /japan_cars_dataset.csv
 /best_model.keras
+/plots/loss_curve.png
+/plots/prediction_scatter.png
