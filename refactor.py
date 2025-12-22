@@ -4,6 +4,7 @@ cars = pd.read_csv('japan_cars_dataset.csv', sep=',')
 # Удалим строки с пустыми значениями
 cars = cars.dropna()
 
+from sklearn.model_selection import train_test_split
 from datetime import datetime
 import numpy as np
 from keras import utils
@@ -79,7 +80,7 @@ cars = cars.sample(frac=1, random_state=42).reset_index(drop=True)
 
 # Используется встроенный в Keras токенизатор для разбиения текста и построения частотного словаря
 tokenizer_mark = Tokenizer(
-    num_words=100,                                           # уменьшенный объем словаря (было 3000)
+    num_words=18,                                            # оптимальный размер словаря для марки
     filters='!"«»#$№%&()*+,-–—./:;<=>?@[\\]^_`{|}~\t\n\xa0', # убираемые из текста ненужные символы
     lower=True,                                              # приведение слов к нижнему регистру
     split=' ',                                               # разделитель слов
@@ -88,7 +89,7 @@ tokenizer_mark = Tokenizer(
 )
 
 tokenizer_model = Tokenizer(
-    num_words=200,                                           # уменьшенный объем словаря (было 3000)
+    num_words=149,                                           # оптимальный размер словаря для модели
     filters='!"«»#$№%&()*+,-–—./:;<=>?@[\\]^_`{|}~\t\n\xa0', # убираемые из текста ненужные символы
     lower=True,                                              # приведение слов к нижнему регистру
     split=' ',                                               # разделитель слов
@@ -184,53 +185,41 @@ def get_train_data(dataFrame):
 # Формирование обучающей выборки из загруженного набора данных
 x_data, y_data = get_train_data(cars)
 
-# Разделение на train/val/test в соотношении 70%/15%/15%
-from sklearn.model_selection import train_test_split
+# === Ключевое исправление: сохраняем индексы разбиения ===
+indices = np.arange(len(cars))
+train_idx, test_idx = train_test_split(indices, test_size=0.15, random_state=42, shuffle=True)
+train_idx, val_idx = train_test_split(train_idx, test_size=0.176, random_state=42, shuffle=True)
 
-# Сначала отделяем тестовую часть
-x_train_val, x_test, y_train_val, y_test = train_test_split(
-    x_data, y_data, test_size=0.15, random_state=42, shuffle=True
-)
+# Теперь создаём разбиение с учётом индексов
+x_train, x_test = x_data[train_idx], x_data[test_idx]
+y_train, y_test = y_data[train_idx], y_data[test_idx]
+x_train, x_val = x_data[train_idx], x_data[val_idx]
+y_train, y_val = y_data[train_idx], y_data[val_idx]
 
-# Затем делим оставшееся на обучающую и валидационную
-x_train, x_val, y_train, y_val = train_test_split(
-    x_train_val, y_train_val, test_size=0.176, random_state=42, shuffle=True
-)
+# Теперь можно правильно взять текстовые данные
+mark_train = cars['mark'].iloc[train_idx].values
+model_train = cars['model'].iloc[train_idx].values
+mark_val = cars['mark'].iloc[val_idx].values
+model_val = cars['model'].iloc[val_idx].values
+mark_test = cars['mark'].iloc[test_idx].values
+model_test = cars['model'].iloc[test_idx].values
 
-# Построение частотного словаря ТОЛЬКО на train данных
-tokenizer_mark.fit_on_texts(cars['mark'].iloc[:len(x_train)])
-tokenizer_model.fit_on_texts(cars['model'].iloc[:len(x_train)])
+# Теперь обучаем токенизаторы ТОЛЬКО на train
+tokenizer_mark.fit_on_texts(mark_train)
+tokenizer_model.fit_on_texts(model_train)
 
-# Преобразование текстов в последовательность индексов согласно частотному словарю
-# Сначала для train
-mark_seq_train = tokenizer_mark.texts_to_sequences(cars['mark'].iloc[:len(x_train)])
-model_seq_train = tokenizer_model.texts_to_sequences(cars['model'].iloc[:len(x_train)])
+# Преобразуем тексты
+mark_seq_train = tokenizer_mark.texts_to_sequences(mark_train)
+model_seq_train = tokenizer_model.texts_to_sequences(model_train)
+mark_seq_val = tokenizer_mark.texts_to_sequences(mark_val)
+model_seq_val = tokenizer_model.texts_to_sequences(model_val)
+mark_seq_test = tokenizer_mark.texts_to_sequences(mark_test)
+model_seq_test = tokenizer_model.texts_to_sequences(model_test)
 
-# Затем для val
-mark_seq_val = tokenizer_mark.texts_to_sequences(cars['mark'].iloc[len(x_train):len(x_train) + len(x_val)])
-model_seq_val = tokenizer_model.texts_to_sequences(cars['model'].iloc[len(x_train):len(x_train) + len(x_val)])
+# Далее — как было: pad_sequences и т.д.
+max_len_mark = min(max(len(seq) for seq in mark_seq_train or [[1]]), 10)
+max_len_model = min(max(len(seq) for seq in model_seq_train or [[1]]), 15)
 
-# И для test
-mark_seq_test = tokenizer_mark.texts_to_sequences(cars['mark'].iloc[len(x_train) + len(x_val):])
-model_seq_test = tokenizer_model.texts_to_sequences(cars['model'].iloc[len(x_train) + len(x_val):])
-# # Преобразование последовательностей индексов в bag of words
-# x_train_mark = tokenizer_mark.sequences_to_matrix(mark_seq)
-# x_train_model = tokenizer_model.sequences_to_matrix(model_seq)
-#
-#
-# # Освобождение памяти от промежуточных данных
-# # del mark_model_seq, tokenizer
-# del mark_seq, model_seq, tokenizer_mark, tokenizer_model
-# print("done")
-
-# Определяем максимальную длину последовательностей
-max_len_mark = max(len(seq) for seq in mark_seq_train) if mark_seq_train else 1
-max_len_model = max(len(seq) for seq in model_seq_train) if model_seq_train else 1
-# Ограничиваем максимальную длину для эффективности
-max_len_mark = min(max_len_mark, 10)
-max_len_model = min(max_len_model, 15)  # модели могут быть длиннее
-
-# Дополняем последовательности до одинаковой длины (padding)
 x_train_mark = pad_sequences(mark_seq_train, maxlen=max_len_mark, padding='post', truncating='post')
 x_train_model = pad_sequences(model_seq_train, maxlen=max_len_model, padding='post', truncating='post')
 x_val_mark = pad_sequences(mark_seq_val, maxlen=max_len_mark, padding='post', truncating='post')
@@ -335,7 +324,7 @@ x = Dense(1, activation='linear')(x)
 model = Model((input1, input2, input3), x)
 
 mae_inv_metric = MAEInverseTransform(y_scaler)
-model.compile(optimizer=Adam(learning_rate=1e-5), loss='mse', metrics=['mse', 'mae', mae_inv_metric])
+model.compile(optimizer=Adam(learning_rate=1e-3), loss='mse', metrics=['mse', 'mae', mae_inv_metric])
 
 checkpoint = ModelCheckpoint('best_model.keras', monitor='val_mse', save_best_only=True, verbose=1, mode='min')
 early_stop = EarlyStopping(monitor='val_mse', patience=30, restore_best_weights=True, verbose=1, mode='min')
@@ -345,7 +334,7 @@ reduce_lr = ReduceLROnPlateau(monitor='val_mse', factor=0.4, patience=10, min_lr
 history = model.fit(
     [x_train_scaled, x_train_mark, x_train_model],
     y_train_scaled,
-    batch_size=20,
+    batch_size=64,
     epochs=450,
     callbacks=[checkpoint, early_stop, reduce_lr],
     validation_data=(
@@ -355,11 +344,15 @@ history = model.fit(
     verbose=1
 )
 
+plt.figure(figsize=(10, 6))
 plt.plot(history.history['mse'], label='Среднеквадратичная ошибка на обучающем наборе')
 plt.plot(history.history['val_mse'], label='Среднеквадратичная ошибка на проверочном наборе')
 plt.xlabel('Эпоха обучения')
 plt.ylabel('Средняя абсолютная ошибка')
 plt.legend()
+plt.title('Динамика обучения модели')
+plt.grid(True)
+plt.savefig('plots/loss_curve.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 # Оценка модели на тестовом наборе
@@ -407,4 +400,6 @@ ax.plot(plt.xlim(), plt.ylim(), 'r')
 plt.xlabel('Правильные значения')
 plt.ylabel('Предсказания')
 plt.grid()
+plt.title('Факт vs Предсказание на тестовом наборе')
+plt.savefig('plots/prediction_scatter.png', dpi=300, bbox_inches='tight')
 plt.show()
